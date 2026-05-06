@@ -14,7 +14,7 @@ TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 
 genai.configure(api_key=GEMINI_API_KEY)
-gemini = genai.GenerativeModel("gemini-2.0-flash")
+gemini = genai.GenerativeModel("gemini-2.0-flash-lite")
 
 def init_db():
     con = sqlite3.connect("gastos.db")
@@ -83,6 +83,7 @@ def get_recent(user_id, limit=10):
     return rows
 
 def parse_with_ai(text: str) -> dict:
+    import time
     today = datetime.now().strftime("%Y-%m-%d")
     prompt = f"""Sos un asistente de registro de gastos e ingresos en español argentino.
 Analizá el mensaje y respondé SOLO con JSON válido sin markdown ni texto extra:
@@ -94,9 +95,16 @@ Fecha hoy: {today}. No uses emojis en la respuesta.
 
 Mensaje: {text}"""
 
-    response = gemini.generate_content(prompt)
-    raw = response.text.strip().replace("```json", "").replace("```", "").strip()
-    return json.loads(raw)
+    for attempt in range(3):
+        try:
+            response = gemini.generate_content(prompt)
+            raw = response.text.strip().replace("```json", "").replace("```", "").strip()
+            return json.loads(raw)
+        except Exception as e:
+            if "429" in str(e) and attempt < 2:
+                time.sleep(5 * (attempt + 1))
+                continue
+            raise
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = [["/resumen", "/detalle"], ["/ayuda"]]
