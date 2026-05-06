@@ -1,21 +1,20 @@
 import os
 import json
 import logging
-from datetime import datetime
+import sqlite3
+from datetime import datetime, timedelta
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-import anthropic
-import sqlite3
+import google.generativeai as genai
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
-ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
+GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 
-client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-
-# ── Base de datos ──────────────────────────────────────────────────────────────
+genai.configure(api_key=GEMINI_API_KEY)
+gemini = genai.GenerativeModel("gemini-1.5-flash")
 
 def init_db():
     con = sqlite3.connect("gastos.db")
@@ -72,7 +71,7 @@ def get_month_total(user_id, month, tipo="gasto"):
     con.close()
     return total
 
-def get_recent(user_id, limit=5):
+def get_recent(user_id, limit=10):
     con = sqlite3.connect("gastos.db")
     cur = con.cursor()
     cur.execute(
@@ -83,38 +82,31 @@ def get_recent(user_id, limit=5):
     con.close()
     return rows
 
-# ── IA: procesar mensaje ───────────────────────────────────────────────────────
-
 def parse_with_ai(text: str) -> dict:
     today = datetime.now().strftime("%Y-%m-%d")
-    system = f"""Sos un asistente de registro de gastos e ingresos en español argentino.
+    prompt = f"""Sos un asistente de registro de gastos e ingresos en español argentino.
 Analizá el mensaje y respondé SOLO con JSON válido sin markdown ni texto extra:
 {{"items":[{{"tipo":"gasto|ingreso","descripcion":"...","monto":123.45,"categoria":"...","fecha":"YYYY-MM-DD"}}],"respuesta":"mensaje amigable en texto plano"}}
 Categorías para gastos: Alimentación, Transporte, Entretenimiento, Salud, Hogar, Ropa, Educación, Tecnología, Otros.
-Para ingresos: categoria = "Ingreso".
-Si no hay monto claro, devolvé items vacío y pedí aclaración.
-Fecha hoy: {today}. No uses emojis en la respuesta."""
+Para ingresos usá categoria Ingreso.
+Si no hay monto claro devolvé items vacío y pedí aclaración.
+Fecha hoy: {today}. No uses emojis en la respuesta.
 
-    msg = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=800,
-        system=system,
-        messages=[{"role": "user", "content": text}]
-    )
-    raw = msg.content[0].text.strip().replace("```json", "").replace("```", "")
+Mensaje: {text}"""
+
+    response = gemini.generate_content(prompt)
+    raw = response.text.strip().replace("```json", "").replace("```", "").strip()
     return json.loads(raw)
-
-# ── Comandos ───────────────────────────────────────────────────────────────────
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = [["/resumen", "/detalle"], ["/ayuda"]]
     await update.message.reply_text(
         "Hola! Soy tu asistente de gastos.\n\n"
-        "Contame tus gastos o ingresos en lenguaje natural:\n"
+        "Contame tus gastos o ingresos:\n"
         "- \"Gaste $500 en el super\"\n"
         "- \"Cobre $80000 de sueldo\"\n"
         "- \"Pague $350 de nafta y $200 de cafe\"\n\n"
-        "Comandos disponibles: /resumen /detalle /ayuda",
+        "Comandos: /resumen /detalle /ayuda",
         reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True)
     )
 
@@ -122,7 +114,7 @@ async def cmd_resumen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     now = datetime.now()
     month = now.strftime("%Y-%m")
-    prev_month = (now.replace(day=1) - __import__("datetime").timedelta(days=1)).strftime("%Y-%m")
+    prev_month = (now.replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
 
     gastos_mes = get_month_total(uid, month, "gasto")
     ingresos_mes = get_month_total(uid, month, "ingreso")
@@ -183,8 +175,6 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/ayuda - este mensaje"
     )
 
-# ── Mensaje libre ──────────────────────────────────────────────────────────────
-
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     text = update.message.text
@@ -192,10 +182,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         parsed = parse_with_ai(text)
     except Exception as e:
-        logger.error(f"AI parse error: {e}")
-        await update.message.reply_text(
-            "No pude procesar ese mensaje. Intenta de nuevo o usa /ayuda."
-        )
+        logger.error(f"AI parse error: {type(e).__name__}: {e}")
+        await update.message.reply_text(f"Error: {type(e).__name__}: {str(e)[:200]}")
         return
 
     for item in parsed.get("items", []):
@@ -209,8 +197,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     await update.message.reply_text(parsed.get("respuesta", "Registrado."))
-
-# ── Main ───────────────────────────────────────────────────────────────────────
 
 def main():
     init_db()
