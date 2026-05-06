@@ -14,7 +14,7 @@ TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 
 genai.configure(api_key=GEMINI_API_KEY)
-gemini = genai.GenerativeModel("gemini-2.0-flash-lite")
+gemini = genai.GenerativeModel("gemini-2.5-flash-preview-04-17")
 
 def init_db():
     con = sqlite3.connect("gastos.db")
