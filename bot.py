@@ -417,7 +417,25 @@ def parse_with_ai(text: str) -> dict:
     prompt = f"""Sos un asistente de registro de gastos e ingresos en español argentino.
 Analizá el mensaje y respondé SOLO con JSON válido sin markdown ni texto extra:
 {{"items":[{{"tipo":"gasto|ingreso","descripcion":"...","monto":1234,"categoria":"...","medio_pago":"efectivo|debito|credito","fecha":"YYYY-MM-DD"}}],"respuesta":"mensaje amigable en texto plano"}}
-Categorías: Alimentación, Transporte, Entretenimiento, Salud, Hogar, Ropa, Educación, Tecnología, Otros.
+Categorías de gastos:
+- Corolla: nafta, seguro, reparaciones, service del Toyota Corolla
+- Focus: nafta, seguro, reparaciones, service del Ford Focus
+- Peajes: peajes (aplica a ambos autos)
+- Deportes: club, cuota club, estacionamiento club, 3er tiempo, after partido
+- Salud: médico, farmacia, obra social, consultas médicas (NO gym)
+- Gym: gym, gimnasio, entrenamiento personal
+- Restaurante: salidas a comer, restaurant, parrilla, cena afuera
+- Delivery: pedidosya, rappi, delivery, comida a domicilio
+- Alimentación: supermercado, almacén, verdulería
+- Entretenimiento: cine, streaming, salidas, juegos, Netflix, Spotify
+- Hogar: alquiler, expensas, servicios, electricidad, gas, agua
+- Limpieza: limpieza del hogar, productos de limpieza, mucama, empleada
+- Mantenimiento: reparaciones del hogar, plomero, electricista, pintura, materiales
+- Ropa: indumentaria, calzado, accesorios
+- Educación: cursos, libros, colegios, universidad
+- Tecnología: electrónica, apps, software, celulares
+- Ahorros: ahorro, plazo fijo, inversión, dólares
+- Otros: todo lo que no entra en las anteriores.
 Para ingresos: categoria Ingreso, medio_pago transferencia.
 medio_pago: crédito/cuotas→credito, débito→debito, efectivo/no aclara→efectivo.
 Montos enteros sin decimales. Fecha hoy: {today}. Sin emojis.
