@@ -134,6 +134,18 @@ def get_gastos_rango(user_id, desde, hasta):
     cur.close(); con.close()
     return rows
 
+def borrar_mes(user_id, month):
+    con = get_con()
+    cur = con.cursor()
+    cur.execute(
+        "DELETE FROM gastos WHERE user_id=%s AND to_char(fecha,'YYYY-MM')=%s",
+        (user_id, month)
+    )
+    deleted = cur.rowcount
+    con.commit()
+    cur.close(); con.close()
+    return deleted
+
 def prev_month_key(month):
     y, m = month.split("-")
     first = datetime(int(y), int(m), 1)
@@ -497,6 +509,35 @@ async def cmd_reportemes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"Generando reporte de {month_label(month)}...")
     await enviar_excel_mensual(uid,month,context.bot)
 
+async def cmd_borrarmes(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    args = context.args
+    month = args[0] if args and len(args[0]) == 7 else datetime.now().strftime("%Y-%m")
+    total = query_one_local(uid, month)
+    if total == 0:
+        await update.message.reply_text(f"No hay gastos registrados en {month_label(month)}.")
+        return
+    # Guardar en context para confirmar
+    context.user_data["borrar_month"] = month
+    context.user_data["borrar_total"] = total
+    await update.message.reply_text(
+        f"⚠️ Estás por borrar TODOS los registros de {month_label(month)}.
+
+"
+        f"Total de registros: {total}
+
+"
+        f"Respondé SI para confirmar o NO para cancelar."
+    )
+
+def query_one_local(user_id, month):
+    con = get_con()
+    cur = con.cursor()
+    cur.execute("SELECT COUNT(*) FROM gastos WHERE user_id=%s AND to_char(fecha,'YYYY-MM')=%s", (user_id, month))
+    count = cur.fetchone()[0]
+    cur.close(); con.close()
+    return count
+
 async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Como registrar gastos:\n\n"
@@ -519,6 +560,7 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/detalle - ultimos 10 registros\n"
         "/reporte - Excel semanal\n"
         "/reportemes - Excel mensual con comparativa\n"
+        "/borrarmes - Borrar todos los registros del mes\n"
         "/reportemes 2025-04 - mes específico\n\n"
         "Automatico:\n"
         "- Cada lunes: Excel de la semana\n"
@@ -529,6 +571,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid=update.effective_user.id
     register_user(uid,update.effective_user.username or str(uid))
     text=update.message.text
+
+    # Confirmar borrado
+    if context.user_data.get("borrar_month"):
+        month = context.user_data["borrar_month"]
+        if text.strip().upper() == "SI":
+            deleted = borrar_mes(uid, month)
+            del context.user_data["borrar_month"]
+            del context.user_data["borrar_total"]
+            await update.message.reply_text(f"✅ Se borraron {deleted} registros de {month_label(month)}.")
+            return
+        elif text.strip().upper() == "NO":
+            del context.user_data["borrar_month"]
+            del context.user_data["borrar_total"]
+            await update.message.reply_text("Cancelado. No se borró nada.")
+            return
+
     try:
         parsed=parse_with_ai(text)
     except Exception as e:
@@ -554,6 +612,7 @@ def main():
     app.add_handler(CommandHandler("detalle",cmd_detalle))
     app.add_handler(CommandHandler("reporte",cmd_reporte))
     app.add_handler(CommandHandler("reportemes",cmd_reportemes))
+    app.add_handler(CommandHandler("borrarmes",cmd_borrarmes))
     app.add_handler(CommandHandler("ayuda",cmd_ayuda))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND,handle_message))
 
