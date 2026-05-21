@@ -521,7 +521,7 @@ async def cmd_borrarmes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["borrar_month"] = month
     context.user_data["borrar_total"] = total
     await update.message.reply_text(
-        f"⚠️ Estás por borrar TODOS los registros de {month_label(month)}.
+        f"ATENCION: Estas por borrar TODOS los registros de {month_label(month)}.
 
 "
         f"Total de registros: {total}
