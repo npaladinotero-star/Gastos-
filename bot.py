@@ -673,23 +673,35 @@ async def handle_documento(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Procesando resumen de tarjeta, un momento...")
 
     try:
+        import tempfile, os
         if update.message.document:
             doc = update.message.document
             if not doc.file_name.lower().endswith(".pdf"):
                 await update.message.reply_text("Por ahora solo proceso PDFs. Mandame el resumen en PDF.")
                 return
-            file = await doc.get_file()
-            file_bytes = await file.download_as_bytearray()
+            file_obj = await doc.get_file()
+            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+                tmp_path = tmp.name
+            await file_obj.download_to_drive(tmp_path)
+            with open(tmp_path, "rb") as f:
+                file_bytes = f.read()
+            os.unlink(tmp_path)
             mime_type = "application/pdf"
         elif update.message.photo:
             photo = update.message.photo[-1]
-            file = await photo.get_file()
-            file_bytes = await file.download_as_bytearray()
+            file_obj = await photo.get_file()
+            with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+                tmp_path = tmp.name
+            await file_obj.download_to_drive(tmp_path)
+            with open(tmp_path, "rb") as f:
+                file_bytes = f.read()
+            os.unlink(tmp_path)
             mime_type = "image/jpeg"
         else:
             return
 
-        resultado = procesar_resumen_tarjeta(bytes(file_bytes), mime_type, uid)
+        logger.info("Archivo recibido: " + str(len(file_bytes)) + " bytes, tipo: " + mime_type)
+        resultado = procesar_resumen_tarjeta(file_bytes, mime_type, uid)
         items = resultado.get("items", [])
 
         if not items:
@@ -712,7 +724,7 @@ async def handle_documento(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
         logger.error("Error procesando resumen: " + str(e))
-        await update.message.reply_text("No pude procesar el archivo. Asegurate de que sea un PDF o imagen clara del resumen.")
+        await update.message.reply_text("Error al procesar: " + str(e)[:300])
 
 
 KEYWORDS_CATEGORIAS = [
