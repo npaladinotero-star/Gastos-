@@ -618,6 +618,103 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/ayuda - este mensaje"
     )
 
+
+def procesar_resumen_tarjeta(file_bytes, mime_type, user_id):
+    import time
+    import base64
+    today = datetime.now().strftime("%Y-%m-%d")
+    cats = [c for c in get_categorias(user_id) if c["activa"]]
+    reglas = get_reglas(user_id)
+    cats_texto = "\n".join(["- " + c["nombre"] + ": " + c["descripcion"] for c in cats])
+    reglas_texto = ""
+    if reglas:
+        reglas_texto = "\nReglas personalizadas:\n"
+        reglas_texto += "\n".join(["- Si menciona '" + r["palabra_clave"] + "' usar categoria: " + r["categoria"] for r in reglas])
+
+    import google.generativeai as genai2
+    model = genai2.GenerativeModel("gemini-2.5-flash")
+
+    prompt = (
+        "Analiza este resumen de tarjeta de credito/debito y extraé TODOS los gastos.\n"
+        "Responde SOLO con JSON valido sin markdown:\n"
+        '{"items":[{"descripcion":"...","monto":1234,"categoria":"...","fecha":"YYYY-MM-DD"}],'
+        '"resumen":"texto breve: X gastos encontrados por $Y total"}\n\n'
+        "Categorias disponibles:\n" + cats_texto + "\n" + reglas_texto + "\n\n"
+        "Reglas:\n"
+        "- Todos son gastos con medio_pago credito\n"
+        "- Si la fecha no tiene anio usá el anio actual\n"
+        "- Ignorar pagos minimos, saldos, intereses y cargos del banco\n"
+        "- Solo incluir compras reales\n"
+        "- Montos enteros sin decimales\n"
+        "- Anio actual: " + today[:4]
+    )
+
+    for attempt in range(3):
+        try:
+            if mime_type == "application/pdf":
+                part = {"inline_data": {"mime_type": "application/pdf", "data": base64.b64encode(file_bytes).decode()}}
+            else:
+                part = {"inline_data": {"mime_type": mime_type, "data": base64.b64encode(file_bytes).decode()}}
+            response = model.generate_content([prompt, part])
+            raw = response.text.strip().replace("```json","").replace("```","").strip()
+            return json.loads(raw)
+        except Exception as e:
+            if "429" in str(e) and attempt < 2:
+                time.sleep(5 * (attempt + 1))
+                continue
+            raise
+
+
+
+async def handle_documento(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    register_user(uid, update.effective_user.username or str(uid))
+
+    await update.message.reply_text("Procesando resumen de tarjeta, un momento...")
+
+    try:
+        if update.message.document:
+            doc = update.message.document
+            if not doc.file_name.lower().endswith(".pdf"):
+                await update.message.reply_text("Por ahora solo proceso PDFs. Mandame el resumen en PDF.")
+                return
+            file = await doc.get_file()
+            file_bytes = await file.download_as_bytearray()
+            mime_type = "application/pdf"
+        elif update.message.photo:
+            photo = update.message.photo[-1]
+            file = await photo.get_file()
+            file_bytes = await file.download_as_bytearray()
+            mime_type = "image/jpeg"
+        else:
+            return
+
+        resultado = procesar_resumen_tarjeta(bytes(file_bytes), mime_type, uid)
+        items = resultado.get("items", [])
+
+        if not items:
+            await update.message.reply_text("No encontre gastos en el archivo. Asegurate de mandar el resumen completo.")
+            return
+
+        for item in items:
+            save_item(
+                uid,
+                item.get("descripcion", "Sin descripcion"),
+                int(float(item.get("monto", 0))),
+                item.get("categoria", "Otros"),
+                "gasto",
+                "credito",
+                item.get("fecha", datetime.now().strftime("%Y-%m-%d"))
+            )
+
+        resumen = resultado.get("resumen", str(len(items)) + " gastos encontrados")
+        await update.message.reply_text("Listo! " + resumen + "\n\nUsa /detalle para ver los ultimos registros.")
+
+    except Exception as e:
+        logger.error("Error procesando resumen: " + str(e))
+        await update.message.reply_text("No pude procesar el archivo. Asegurate de que sea un PDF o imagen clara del resumen.")
+
+
 KEYWORDS_CATEGORIAS = [
     "agrega", "agregá", "nueva categoria", "nueva categoría",
     "saca", "sacá", "borra", "borrá", "desactiva", "desactivá",
@@ -696,6 +793,8 @@ def main():
     app.add_handler(CommandHandler("borrarmes",cmd_borrarmes))
     app.add_handler(CommandHandler("ayuda",cmd_ayuda))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND,handle_message))
+    app.add_handler(MessageHandler(filters.Document.PDF, handle_documento))
+    app.add_handler(MessageHandler(filters.PHOTO, handle_documento))
     jq=app.job_queue; now=datetime.now()
     days_to_monday=(7-now.weekday())%7 or 7
     next_monday=now.replace(hour=9,minute=0,second=0,microsecond=0)+timedelta(days=days_to_monday)
