@@ -230,6 +230,34 @@ def get_recent(user_id, limit=10):
     con.close()
     return rows
 
+def get_recent_with_ids(user_id, limit=10):
+    con = get_con()
+    cur = con.cursor()
+    cur.execute(
+        "SELECT id, descripcion, monto, categoria, tipo, medio_pago, fecha FROM gastos WHERE user_id=%s ORDER BY fecha DESC, id DESC LIMIT %s",
+        (user_id, limit)
+    )
+    rows = cur.fetchall()
+    cur.close(); con.close()
+    return rows
+
+def borrar_registro(user_id, gasto_id):
+    con = get_con()
+    cur = con.cursor()
+    cur.execute("DELETE FROM gastos WHERE id=%s AND user_id=%s", (gasto_id, user_id))
+    affected = cur.rowcount
+    con.commit()
+    cur.close(); con.close()
+    return affected
+
+def get_gasto_by_id(user_id, gasto_id):
+    con = get_con()
+    cur = con.cursor()
+    cur.execute("SELECT id, descripcion, monto, categoria, tipo, medio_pago, fecha FROM gastos WHERE id=%s AND user_id=%s", (gasto_id, user_id))
+    row = cur.fetchone()
+    cur.close(); con.close()
+    return row
+
 def get_gastos_rango(user_id, desde, hasta):
     con = get_con()
     cur = con.cursor()
@@ -497,7 +525,7 @@ async def job_check_fin_mes(context):
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid=update.effective_user.id
     register_user(uid,update.effective_user.username or str(uid))
-    kb=[["/resumen","/detalle"],["/categorias","/reporte"],["/reportemes","/ayuda"]]
+    kb=[["/resumen","/detalle"],["/categorias","/borrar"],["/reporte","/reportemes"],["/ayuda"]]
     await update.message.reply_text(
         "Hola! Soy tu asistente de gastos.\n\n"
         "Registro tus gastos con IA:\n"
@@ -583,6 +611,20 @@ async def cmd_reportemes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Generando reporte de "+month_label(month)+"...")
     await enviar_excel_mensual(uid,month,context.bot)
 
+async def cmd_borrar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    rows = get_recent_with_ids(uid, 10)
+    if not rows:
+        await update.message.reply_text("No hay registros para borrar.")
+        return
+    lines = ["Ultimos 10 registros. Responde con el NUMERO para borrar:", ""]
+    for i, (gid, desc, monto, cat, tipo, medio, fecha) in enumerate(rows, 1):
+        prefix = "+" if tipo == "ingreso" else "-"
+        lines.append(str(i) + ". " + str(fecha) + "  " + prefix + "$" + str(int(monto)) + "  " + desc + " (" + cat + ")")
+    lines.append("Responde con el numero (1-" + str(len(rows)) + ") o CANCELAR.")
+    context.user_data["borrar_lista"] = rows
+    await update.message.reply_text("\n".join(lines))
+
 async def cmd_borrarmes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid=update.effective_user.id; args=context.args
     month=args[0] if args and len(args[0])==7 else datetime.now().strftime("%Y-%m")
@@ -614,6 +656,7 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/reporte - Excel semanal\n"
         "/reportemes - Excel mensual\n"
         "/reportemes 2025-04 - mes especifico\n"
+        "/borrar - borrar un registro especifico\n"
         "/borrarmes - borrar registros del mes\n"
         "/ayuda - este mensaje"
     )
@@ -739,6 +782,52 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     register_user(uid,update.effective_user.username or str(uid))
     text=update.message.text
 
+    # Confirmar borrado de registro individual
+    if context.user_data.get("borrar_lista"):
+        rows = context.user_data["borrar_lista"]
+        if text.strip().upper() == "CANCELAR":
+            del context.user_data["borrar_lista"]
+            await update.message.reply_text("Cancelado.")
+            return
+        try:
+            num = int(text.strip())
+            if 1 <= num <= len(rows):
+                gid, desc, monto, cat, tipo, medio, fecha = rows[num-1]
+                # Pedir confirmacion
+                context.user_data["borrar_id"] = gid
+                context.user_data["borrar_desc"] = desc
+                del context.user_data["borrar_lista"]
+                msg = "Confirmas borrar este registro?\n\n"
+                msg += str(fecha) + "  $" + str(int(monto)) + "  " + desc + " (" + cat + ")\n\n"
+                msg += "Responde SI para confirmar o NO para cancelar."
+                await update.message.reply_text(msg)
+                return
+            else:
+                await update.message.reply_text("Numero invalido. Responde entre 1 y " + str(len(rows)) + " o CANCELAR.")
+                return
+        except ValueError:
+            await update.message.reply_text("Responde con un numero o CANCELAR.")
+            return
+
+    # Confirmar borrado individual
+    if context.user_data.get("borrar_id"):
+        gid = context.user_data["borrar_id"]
+        desc = context.user_data["borrar_desc"]
+        if text.strip().upper() == "SI":
+            affected = borrar_registro(uid, gid)
+            del context.user_data["borrar_id"]
+            del context.user_data["borrar_desc"]
+            if affected:
+                await update.message.reply_text("Registro borrado: " + desc)
+            else:
+                await update.message.reply_text("No se pudo borrar. Es posible que ya no exista.")
+            return
+        elif text.strip().upper() == "NO":
+            del context.user_data["borrar_id"]
+            del context.user_data["borrar_desc"]
+            await update.message.reply_text("Cancelado.")
+            return
+
     if context.user_data.get("borrar_month"):
         month=context.user_data["borrar_month"]
         if text.strip().upper()=="SI":
@@ -802,6 +891,7 @@ def main():
     app.add_handler(CommandHandler("categorias",cmd_categorias))
     app.add_handler(CommandHandler("reporte",cmd_reporte))
     app.add_handler(CommandHandler("reportemes",cmd_reportemes))
+    app.add_handler(CommandHandler("borrar",cmd_borrar))
     app.add_handler(CommandHandler("borrarmes",cmd_borrarmes))
     app.add_handler(CommandHandler("ayuda",cmd_ayuda))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND,handle_message))
