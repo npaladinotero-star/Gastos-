@@ -320,7 +320,7 @@ def parse_with_ai(text, user_id):
 
     for attempt in range(3):
         try:
-            url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + GEMINI_API_KEY
+            url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-04-17:generateContent?key=" + GEMINI_API_KEY
             body = json.dumps({"contents": [{"parts": [{"text": prompt}]}]}).encode()
             req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
             with urllib.request.urlopen(req, timeout=30) as resp:
@@ -355,7 +355,7 @@ def gestionar_categorias_con_ai(text, user_id):
 
     for attempt in range(3):
         try:
-            url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + GEMINI_API_KEY
+            url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-04-17:generateContent?key=" + GEMINI_API_KEY
             body = json.dumps({"contents": [{"parts": [{"text": prompt}]}]}).encode()
             req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
             with urllib.request.urlopen(req, timeout=30) as resp:
