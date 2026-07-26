@@ -5,7 +5,8 @@ import calendar
 from datetime import datetime, timedelta
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-import google.generativeai as genai
+import urllib.request
+from http.server import HTTPServer, BaseHTTPRequestHandler
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
@@ -16,8 +17,6 @@ TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 DATABASE_URL   = os.environ["DATABASE_URL"]
 
-genai.configure(api_key=GEMINI_API_KEY)
-gemini = genai.GenerativeModel("gemini-2.5-flash")
 
 BASE_CATEGORIAS = [
     {"nombre": "Corolla",         "descripcion": "nafta, seguro, reparaciones, service del Toyota Corolla"},
@@ -320,8 +319,12 @@ def parse_with_ai(text, user_id):
 
     for attempt in range(3):
         try:
-            response = gemini.generate_content(prompt)
-            raw = response.text.strip().replace("```json","").replace("```","").strip()
+            url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + GEMINI_API_KEY
+            body = json.dumps({"contents": [{"parts": [{"text": prompt}]}]}).encode()
+            req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                data = json.loads(resp.read())
+            raw = data["candidates"][0]["content"]["parts"][0]["text"].strip().replace("```json","").replace("```","").strip()
             return json.loads(raw)
         except Exception as e:
             if "429" in str(e) and attempt < 2:
@@ -351,8 +354,12 @@ def gestionar_categorias_con_ai(text, user_id):
 
     for attempt in range(3):
         try:
-            response = gemini.generate_content(prompt)
-            raw = response.text.strip().replace("```json","").replace("```","").strip()
+            url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + GEMINI_API_KEY
+            body = json.dumps({"contents": [{"parts": [{"text": prompt}]}]}).encode()
+            req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                data = json.loads(resp.read())
+            raw = data["candidates"][0]["content"]["parts"][0]["text"].strip().replace("```json","").replace("```","").strip()
             return json.loads(raw)
         except Exception as e:
             if "429" in str(e) and attempt < 2:
@@ -674,9 +681,6 @@ def procesar_resumen_tarjeta(file_bytes, mime_type, user_id):
         reglas_texto = "\nReglas personalizadas:\n"
         reglas_texto += "\n".join(["- Si menciona '" + r["palabra_clave"] + "' usar categoria: " + r["categoria"] for r in reglas])
 
-    import google.generativeai as genai2
-    model = genai2.GenerativeModel("gemini-2.5-flash")
-
     prompt = (
         "Analiza este resumen de tarjeta de credito/debito y extraé TODOS los gastos.\n"
         "Responde SOLO con JSON valido sin markdown:\n"
@@ -882,6 +886,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                   item.get("fecha",datetime.now().strftime("%Y-%m-%d")))
     await update.message.reply_text(parsed.get("respuesta","Registrado."))
 
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK")
+    def log_message(self, *a): pass
+
+def run_health_server():
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(("0.0.0.0", port), HealthHandler)
+    server.serve_forever()
+
 def main():
     init_db()
     app=Application.builder().token(TELEGRAM_TOKEN).build()
@@ -902,6 +918,7 @@ def main():
     next_monday=now.replace(hour=9,minute=0,second=0,microsecond=0)+timedelta(days=days_to_monday)
     jq.run_repeating(job_semanal,interval=604800,first=(next_monday-now).total_seconds())
     jq.run_repeating(job_check_fin_mes,interval=86400,first=3600)
+    threading.Thread(target=run_health_server, daemon=True).start()
     logger.info("Bot iniciado.")
     app.run_polling()
 
